@@ -16,12 +16,16 @@
  */
 package org.pentaho.database.dialect;
 
-import org.pentaho.database.DatabaseDialectException;
 import org.pentaho.database.IValueMeta;
 import org.pentaho.database.model.DatabaseAccessType;
 import org.pentaho.database.model.DatabaseType;
 import org.pentaho.database.model.IDatabaseConnection;
 import org.pentaho.database.model.IDatabaseType;
+import org.pentaho.database.util.ClassUtil;
+
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.util.Collections;
 
 public class SnowflakeDatabaseDialect extends AbstractDatabaseDialect {
 
@@ -31,17 +35,46 @@ public class SnowflakeDatabaseDialect extends AbstractDatabaseDialect {
     DatabaseAccessType.NATIVE, DatabaseAccessType.ODBC, DatabaseAccessType.JNDI ), 443,
     "https://docs.snowflake.net/manuals/user-guide/jdbc-configure.html#jdbc-driver-connection-string" );
 
-  @Override public String getURL( IDatabaseConnection connection ) throws DatabaseDialectException {
+  @Override public String getURL( IDatabaseConnection connection ) {
     if ( connection.getAccessType() == DatabaseAccessType.ODBC ) {
       return "jdbc:odbc:" + connection.getDatabaseName();
     } else {
-      return getNativeJdbcPre() + connection.getHostname() + ":" + connection.getDatabasePort() + "/?db=" + connection.getDatabaseName()
+      return getNativeJdbcPre() + connection.getHostname() + ":" + connection.getDatabasePort() + "/?db=" + connection
+        .getDatabaseName()
         + "&warehouse=" + connection.getAttributes().get( WAREHOUSE );
     }
   }
 
   @Override public String getExtraOptionSeparator() {
     return "&";
+  }
+
+  /**
+   * Checks whether any drivers registered with DriverManager are able to accept
+   * a jdbc url matching snowflakes scheme.
+   * This is necessary for drivers wrapped in a DelegatingDriver (which I do with snowflake
+   * in this POC to make it accessible from the main classloader).
+   * Consider moving this to the base class, and simplifying the existing big-data jdbc drivers,
+   * which currenty require implementing the DriverLocator interface.
+2   */
+  @Override public boolean isUsable() {
+    boolean initialized = ClassUtil.canLoadClass( getNativeDriver() );
+    return initialized || Collections.list( DriverManager.getDrivers() ).stream()
+      .anyMatch( d -> {
+          try {
+            return d.acceptsURL( getNativeJdbcPre() + "server" );
+          } catch ( SQLException e ) {
+            return false;
+          }
+        }
+      );
+  }
+
+  /**
+   * initialize just verifies the driver will be usable.
+   */
+  @Override public boolean initialize( String classname ) {
+    return isUsable();
   }
 
   @Override
